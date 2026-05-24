@@ -6,13 +6,21 @@ from ..db.session import get_db
 from ..models.reservation import Reservation as ReservationModel
 from ..models.reservation_seat import ReservationSeat as ReservationSeatModel
 from ..models.seat import Seat as SeatModel
+from ..models.invoice import Invoice as InvoiceModel
+from ..models.showtime import Showtime as ShowtimeModel
+from ..models.movie import Movie as MovieModel
 from ..schemas.cinema import Reservation, ReservationCreate
-
+import uuid
+from datetime import datetime
 router = APIRouter(prefix='/reservations', tags=['reservations'])
 
 @router.get('/', response_model=List[Reservation])
 async def read_reservations(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(ReservationModel))
+    result = await db.execute(
+        select(ReservationModel)
+        .join(ShowtimeModel)
+        .where(ShowtimeModel.end_time > datetime.utcnow())
+    )
     return result.scalars().all()
 
 @router.post('/', response_model=Reservation)
@@ -49,6 +57,15 @@ async def create_reservation(reservation: ReservationCreate, db: AsyncSession = 
                 showtime_id=reservation.showtime_id
             )
             db.add(db_res_seat)
+            
+    # Create an invoice for the reservation and purchase
+    invoice_path = f"/static/invoices/invoice_{uuid.uuid4().hex[:8]}.pdf"
+    db_invoice = InvoiceModel(
+        reservation_id=db_reservation.id,
+        pdf_path=invoice_path,
+        total=reservation.total_price
+    )
+    db.add(db_invoice)
             
     await db.commit()
     await db.refresh(db_reservation)
@@ -92,4 +109,33 @@ async def get_full_reservations(showtime_id: int, db: AsyncSession = Depends(get
                 "user_name": res.user.full_name,
                 "all_seats": ", ".join(seat_names)
             })
+    return response
+
+@router.get('/history/all')
+async def get_reservation_history_all(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ReservationModel)
+        .options(
+            selectinload(ReservationModel.user),
+            selectinload(ReservationModel.showtime).selectinload(ShowtimeModel.movie),
+            selectinload(ReservationModel.seats).selectinload(ReservationSeatModel.seat)
+        )
+        .order_by(ReservationModel.created_at.desc())
+    )
+    reservations = result.scalars().all()
+    
+    response = []
+    for res in reservations:
+        seat_names = [f"{rs.seat.row}{rs.seat.number}" for rs in res.seats]
+        response.append({
+            "reservation_id": res.id,
+            "user_name": res.user.full_name if res.user else "Desconocido",
+            "user_email": res.user.email if res.user else "",
+            "movie_title": res.showtime.movie.title if res.showtime and res.showtime.movie else "Desconocida",
+            "showtime_start": res.showtime.start_time.isoformat() if res.showtime else "",
+            "seats": ", ".join(seat_names) if seat_names else "Ninguno",
+            "total_price": res.total_price,
+            "created_at": res.created_at.isoformat() if res.created_at else "",
+            "status": res.status
+        })
     return response

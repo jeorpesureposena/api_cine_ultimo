@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List
+from datetime import datetime
 from ..db.session import get_db
 from ..models.showtime import Showtime as ShowtimeModel
 from ..schemas.cinema import Showtime, ShowtimeCreate, ShowtimeUpdate
@@ -10,7 +11,10 @@ router = APIRouter(prefix='/showtimes', tags=['showtimes'])
 
 @router.get('/', response_model=List[Showtime])
 async def read_showtimes(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(ShowtimeModel).where(ShowtimeModel.is_active == True))
+    result = await db.execute(select(ShowtimeModel).where(
+        ShowtimeModel.is_active == True,
+        ShowtimeModel.end_time > datetime.utcnow()
+    ))
     return result.scalars().all()
 
 @router.post('/', response_model=Showtime)

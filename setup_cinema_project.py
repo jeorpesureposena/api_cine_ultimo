@@ -20,7 +20,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 def write(path: Path, content: str):
-    """Crea el directorio padre si no existe y escribe el contenido en el archivo."""
+    """
+    Crea el directorio padre si no existe y escribe el contenido proporcionado 
+    en un archivo en la ruta especificada.
+    
+    Args:
+        path (Path): La ruta donde se creará el archivo.
+        content (str): El contenido de texto que se escribirá en el archivo.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     print(f"Created: {path}")

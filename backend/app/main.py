@@ -1,3 +1,7 @@
+"""
+Punto de entrada principal de la aplicación FastAPI.
+Configura los enrutadores, CORS, archivos estáticos y la inicialización de la base de datos.
+"""
 import uvicorn
 from fastapi import FastAPI
 from .core import config

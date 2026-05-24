@@ -11,7 +11,7 @@ class MovieBase(BaseModel):
     poster_url: Optional[str] = None
 
 class MovieCreate(MovieBase):
-    pass
+    genre_ids: Optional[List[int]] = []
 
 class MovieUpdate(BaseModel):
     title: Optional[str] = None
@@ -19,9 +19,11 @@ class MovieUpdate(BaseModel):
     duration_minutes: Optional[int] = None
     rating: Optional[str] = None
     poster_url: Optional[str] = None
+    genre_ids: Optional[List[int]] = None
 
 class Movie(MovieBase):
     id: int
+    genres: List["Genre"] = []
     class Config:
         from_attributes = True
 

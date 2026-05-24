@@ -1,5 +1,14 @@
 import { useState, useEffect } from 'react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
+/**
+ * Componente principal de la aplicación.
+ * Maneja el estado de autenticación, verificación de salud de la API y el enrutamiento base.
+ * Muestra el panel de administración si el usuario está autenticado, o la pantalla de inicio de sesión/registro.
+ *
+ * @returns {JSX.Element} El componente raíz renderizado.
+ */
 function App() {
   const [apiStatus, setApiStatus] = useState('Checking...');
   const [activeTab, setActiveTab] = useState('login');
@@ -57,6 +66,13 @@ function App() {
   );
 }
 
+/**
+ * Componente que muestra las opciones principales para el usuario (cartelera, reservas, perfil).
+ *
+ * @param {Object} props - Propiedades del componente.
+ * @param {Function} props.onNavigate - Función callback para manejar la navegación entre vistas.
+ * @returns {JSX.Element} Panel de control interactivo.
+ */
 function Dashboard({ onNavigate }) {
   const options = [
     { id: 'movies', title: 'Explorar Cartelera', desc: 'Descubre los últimos estrenos y compra tus entradas.', icon: '🍿', color: 'bg-red-500/10 border-red-500/30 hover:border-cinema-red' },
@@ -92,18 +108,70 @@ function Dashboard({ onNavigate }) {
 }
 
 function MyReservations({ onBack }) {
+  const [reservations, setReservations] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('http://localhost:8000/api/v1/reservations/')
+      .then(res => res.json())
+      .then(data => {
+        setReservations(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error("Error fetching reservations:", err);
+        setLoading(false);
+      });
+  }, []);
+
+  const handleDownloadInvoice = (reservationId) => {
+    // Aquí puedes redirigir al endpoint de descarga de factura
+    alert(`Descargando factura para la reserva #${reservationId}...`);
+    // window.open(`http://localhost:8000/api/v1/reservations/${reservationId}/invoice`, '_blank');
+  };
+
   return (
-    <div className="animate-fade-in max-w-4xl mx-auto text-center">
+    <div className="animate-fade-in max-w-4xl mx-auto">
       <button onClick={onBack} className="text-gray-400 hover:text-white mb-6 flex items-center gap-2">
         ← Volver al Panel
       </button>
-      <div className="glass-panel py-20">
+      <div className="glass-panel py-10 px-8 text-center">
         <div className="text-6xl mb-6">🎫</div>
         <h2 className="text-3xl mb-4">Mis Reservas</h2>
-        <p className="text-gray-400 mb-8">Aún no tienes reservas activas.</p>
-        <button onClick={() => onBack()} className="py-3 px-8 rounded-lg font-heading font-semibold bg-cinema-red text-white hover:bg-cinema-red-hover transition-colors">
-          Ir a Cartelera
-        </button>
+        
+        {loading ? (
+          <p className="text-gray-400 mb-8">Cargando reservas...</p>
+        ) : reservations.length === 0 ? (
+          <>
+            <p className="text-gray-400 mb-8">Aún no tienes reservas activas.</p>
+            <button onClick={() => onBack()} className="py-3 px-8 rounded-lg font-heading font-semibold bg-cinema-red text-white hover:bg-cinema-red-hover transition-colors">
+              Ir a Cartelera
+            </button>
+          </>
+        ) : (
+          <div className="mt-8 space-y-4 text-left">
+            {reservations.map((res) => (
+              <div key={res.id} className="bg-[#1a1a22] border border-gray-800 rounded-xl p-6 flex flex-col sm:flex-row justify-between items-center gap-4 hover:border-blue-500/30 transition-colors">
+                <div>
+                  <h3 className="text-xl font-bold text-white">Reserva #{res.id}</h3>
+                  <p className="text-gray-400 text-sm mt-1">Fecha: {new Date(res.created_at).toLocaleDateString()}</p>
+                  <p className="text-[#fdd835] font-bold mt-2">Total: ${res.total_price.toFixed(2)}</p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <span className={`px-4 py-2 rounded-full text-xs font-bold self-center ${res.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                    {res.status.toUpperCase()}
+                  </span>
+                  <button 
+                    onClick={() => handleDownloadInvoice(res.id)}
+                    className="flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors shadow-lg shadow-blue-900/20"
+                  >
+                    📄 Descargar Factura
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -114,7 +182,7 @@ function MovieGrid({ isAuthenticated, onBuyTickets, hideTitle }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/v1/movies/')
+    fetch('http://localhost:8000/api/v1/movies/active')
       .then(res => res.json())
       .then(data => {
         // Asignar precio base estático si el modelo no lo tiene para propósitos visuales
@@ -559,6 +627,14 @@ function RegisterForm({ onSwitch }) {
   );
 }
 
+/**
+ * Panel de Administración general que envuelve el menú lateral (Sidebar) y el contenido principal.
+ * Maneja el estado de la sección actual (dashboard, películas, salas, reservas, etc.).
+ *
+ * @param {Object} props - Propiedades del componente.
+ * @param {Function} props.onBack - Función para cerrar sesión o volver atrás.
+ * @returns {JSX.Element} Interfaz de administración.
+ */
 function AdminPanel({ onBack }) {
   const [currentSection, setCurrentSection] = useState('dashboard');
 
@@ -594,6 +670,7 @@ function AdminPanel({ onBack }) {
             <h3 className="text-xs font-bold text-gray-500 mb-2 tracking-widest uppercase">Clientes</h3>
             <SidebarItem icon="👥" label="Clientes" active={currentSection === 'clients'} onClick={() => setCurrentSection('clients')} />
             <SidebarItem icon="🎫" label="Reservas" active={currentSection === 'reservations'} onClick={() => setCurrentSection('reservations')} />
+            <SidebarItem icon="📜" label="Historial" active={currentSection === 'history'} onClick={() => setCurrentSection('history')} />
             <SidebarItem icon="🛡️" label="Administradores" active={currentSection === 'admins'} onClick={() => setCurrentSection('admins')} />
           </div>
         </div>
@@ -627,9 +704,10 @@ function AdminPanel({ onBack }) {
           {currentSection === 'showtimes' && <AdminShowtimesContent />}
           {currentSection === 'clients' && <AdminClientsContent />}
           {currentSection === 'reservations' && <AdminReservationsContent />}
+          {currentSection === 'history' && <AdminHistoryContent />}
           {currentSection === 'admins' && <AdminAdminsContent />}
           
-          {currentSection !== 'dashboard' && currentSection !== 'tickets' && currentSection !== 'movies' && currentSection !== 'genres' && currentSection !== 'halls' && currentSection !== 'seats' && currentSection !== 'showtimes' && currentSection !== 'clients' && currentSection !== 'reservations' && currentSection !== 'admins' && (
+          {currentSection !== 'dashboard' && currentSection !== 'tickets' && currentSection !== 'movies' && currentSection !== 'genres' && currentSection !== 'halls' && currentSection !== 'seats' && currentSection !== 'showtimes' && currentSection !== 'clients' && currentSection !== 'reservations' && currentSection !== 'history' && currentSection !== 'admins' && (
             <div className="flex flex-col items-center justify-center h-64 border border-dashed border-[#1f1f27] rounded-xl text-gray-500">
               <span className="text-4xl mb-4">🚧</span>
               <p>Este módulo se encuentra en construcción.</p>
@@ -734,28 +812,49 @@ function AdminMoviesContent() {
   const [duration, setDuration] = useState('');
   const [rating, setRating] = useState('Todo Público');
   const [imageFile, setImageFile] = useState(null);
+  const [selectedGenres, setSelectedGenres] = useState([]);
+  const [allGenres, setAllGenres] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  
   const [statusMsg, setStatusMsg] = useState({ text: '', type: '' });
   const [loading, setLoading] = useState(false);
 
   const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({ title: '', description: '', duration_minutes: '', rating: '' });
+  const [editForm, setEditForm] = useState({ title: '', description: '', duration_minutes: '', rating: '', genre_ids: [] });
   const [editImageFile, setEditImageFile] = useState(null);
 
-  const fetchMovies = async () => {
+  const fetchMoviesAndGenres = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/v1/movies/');
-      if (res.ok) {
-        const data = await res.json();
-        setMovies(data);
-      }
+      const [moviesRes, genresRes] = await Promise.all([
+        fetch('http://localhost:8000/api/v1/movies/'),
+        fetch('http://localhost:8000/api/v1/genres/')
+      ]);
+      
+      if (moviesRes.ok) setMovies(await moviesRes.json());
+      if (genresRes.ok) setAllGenres(await genresRes.json());
     } catch (err) {
       console.error(err);
     }
   };
 
   useEffect(() => {
-    fetchMovies();
+    fetchMoviesAndGenres();
   }, []);
+
+  const handleGenreChange = (genreId, isEdit = false) => {
+    if (isEdit) {
+      setEditForm(prev => ({
+        ...prev,
+        genre_ids: prev.genre_ids.includes(genreId) 
+          ? prev.genre_ids.filter(id => id !== genreId)
+          : [...prev.genre_ids, genreId]
+      }));
+    } else {
+      setSelectedGenres(prev => 
+        prev.includes(genreId) ? prev.filter(id => id !== genreId) : [...prev, genreId]
+      );
+    }
+  };
 
   const handleAddMovie = async (e) => {
     e.preventDefault();
@@ -775,7 +874,8 @@ function AdminMoviesContent() {
         title: title,
         description: desc,
         duration_minutes: dur,
-        rating: rating
+        rating: rating,
+        genre_ids: selectedGenres
       };
 
       const response = await fetch('http://localhost:8000/api/v1/movies/', {
@@ -806,7 +906,8 @@ function AdminMoviesContent() {
         setDuration('');
         setRating('Todo Público');
         setImageFile(null);
-        fetchMovies();
+        setSelectedGenres([]);
+        fetchMoviesAndGenres();
       } else {
         const errData = await response.json();
         setStatusMsg({ text: errData.detail || 'Error al agregar la película.', type: 'error' });
@@ -829,7 +930,7 @@ function AdminMoviesContent() {
         }
       });
       if (response.ok) {
-        fetchMovies();
+        fetchMoviesAndGenres();
       } else {
         alert('Error al eliminar película');
       }
@@ -845,7 +946,8 @@ function AdminMoviesContent() {
       title: movie.title,
       description: movie.description,
       duration_minutes: movie.duration_minutes,
-      rating: movie.rating
+      rating: movie.rating,
+      genre_ids: movie.genres ? movie.genres.map(g => g.id) : []
     });
   };
 
@@ -875,7 +977,7 @@ function AdminMoviesContent() {
         }
         setEditingId(null);
         setEditImageFile(null);
-        fetchMovies();
+        fetchMoviesAndGenres();
       } else {
         alert('Error al actualizar película');
       }
@@ -949,6 +1051,21 @@ function AdminMoviesContent() {
             </div>
           </div>
           <div>
+            <label className="block text-gray-400 text-sm font-semibold mb-2">Géneros</label>
+            <div className="flex flex-wrap gap-2">
+              {allGenres.map(genre => (
+                <button
+                  key={genre.id}
+                  type="button"
+                  onClick={() => handleGenreChange(genre.id)}
+                  className={`px-3 py-1 rounded-full text-xs font-bold transition-colors ${selectedGenres.includes(genre.id) ? 'bg-[#fdd835] text-black' : 'bg-[#1f1f27] text-gray-400 hover:bg-[#2a2a35] hover:text-white'}`}
+                >
+                  {genre.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
             <label className="block text-gray-400 text-sm font-semibold mb-2">Póster (Opcional)</label>
             <input type="file" accept="image/*" onChange={(e) => setImageFile(e.target.files[0])}
               className="w-full p-3 rounded-xl bg-[#0b0b0f] border border-[#1f1f27] text-white file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-[#fdd835] file:text-black hover:file:bg-[#fff04d]" />
@@ -966,7 +1083,16 @@ function AdminMoviesContent() {
 
       {/* Columna Derecha: Lista de Películas */}
       <div className="bg-[#121217] border border-[#1f1f27] rounded-2xl p-8">
-        <h3 className="text-2xl font-bold mb-6 text-white uppercase tracking-widest">Películas Registradas</h3>
+        <div className="flex flex-col mb-6 gap-4">
+          <h3 className="text-2xl font-bold text-white uppercase tracking-widest">Películas Registradas</h3>
+          <input 
+            type="text" 
+            placeholder="Buscar por título o género..." 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full p-3 rounded-xl bg-[#0b0b0f] border border-[#1f1f27] text-white focus:outline-none focus:border-[#fdd835]"
+          />
+        </div>
         {movies.length === 0 ? (
           <div className="text-center py-12 text-gray-500 border border-dashed border-[#1f1f27] rounded-xl">
             <span className="text-4xl mb-4 block">🎬</span>
@@ -974,7 +1100,12 @@ function AdminMoviesContent() {
           </div>
         ) : (
           <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-            {movies.map(movie => (
+            {movies.filter(m => {
+              const term = searchTerm.toLowerCase();
+              const matchTitle = m.title.toLowerCase().includes(term);
+              const matchGenre = m.genres && m.genres.some(g => g.name.toLowerCase().includes(term));
+              return matchTitle || matchGenre;
+            }).map(movie => (
               <div key={movie.id} className="p-5 border border-[#1f1f27] rounded-xl bg-[#0b0b0f] hover:border-[#fdd835]/50 transition-colors">
                 {editingId === movie.id ? (
                   <div className="space-y-3">
@@ -989,6 +1120,18 @@ function AdminMoviesContent() {
                         <option value="+15">+15</option>
                         <option value="+18">+18</option>
                       </select>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {allGenres.map(genre => (
+                        <button
+                          key={genre.id}
+                          type="button"
+                          onClick={() => handleGenreChange(genre.id, true)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${editForm.genre_ids.includes(genre.id) ? 'bg-[#fdd835] text-black' : 'bg-[#1f1f27] text-gray-400'}`}
+                        >
+                          {genre.name}
+                        </button>
+                      ))}
                     </div>
                     <input type="file" accept="image/*" onChange={(e) => setEditImageFile(e.target.files[0])} className="w-full mt-2 p-2 bg-[#121217] text-white rounded border border-[#fdd835] text-sm file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-[#fdd835] file:text-black hover:file:bg-[#fff04d]" />
                     <div className="flex gap-2 mt-2">
@@ -1009,6 +1152,13 @@ function AdminMoviesContent() {
                       </div>
                     </div>
                     <p className="text-gray-400 text-sm line-clamp-2 mb-3">{movie.description}</p>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {movie.genres && movie.genres.map(g => (
+                        <span key={g.id} className="bg-[#2a2a35] text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded">
+                          {g.name}
+                        </span>
+                      ))}
+                    </div>
                     <div className="text-xs text-gray-500 font-medium uppercase tracking-widest flex items-center gap-2">
                       <span>⏱️ {movie.duration_minutes} min</span>
                     </div>
@@ -1813,7 +1963,7 @@ function AdminClientsContent() {
   const fetchClients = async () => {
     fetch('http://localhost:8000/api/v1/users/')
       .then(res => res.json())
-      .then(data => setClients(data))
+      .then(data => setClients(data.filter(user => user.role === 'cliente')))
       .catch(err => console.error(err));
   };
 
@@ -1958,7 +2108,6 @@ function AdminClientsContent() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-[#1f1f27] text-gray-500 text-xs tracking-widest uppercase">
-                <th className="p-4 font-bold">ID</th>
                 <th className="p-4 font-bold">Nombre Completo</th>
                 <th className="p-4 font-bold">Correo Electrónico</th>
                 <th className="p-4 font-bold">Teléfono</th>
@@ -1969,7 +2118,6 @@ function AdminClientsContent() {
             <tbody>
               {clients.map(client => (
                 <tr key={client.id} className="border-b border-[#1f1f27] hover:bg-[#0b0b0f] transition-colors">
-                  <td className="p-4 font-bold text-[#fdd835]">#{client.id}</td>
                   <td className="p-4 font-semibold text-white">{client.full_name || 'Sin nombre'}</td>
                   <td className="p-4 text-gray-400">{client.email}</td>
                   <td className="p-4 text-gray-400">{client.phone || 'No registrado'}</td>
@@ -2412,6 +2560,7 @@ function AdminReservationsContent() {
                   <th className="p-4 font-bold">Fecha de Compra</th>
                   <th className="p-4 font-bold">Total Pagado</th>
                   <th className="p-4 font-bold">Estado</th>
+                  <th className="p-4 font-bold text-center">Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -2431,9 +2580,175 @@ function AdminReservationsContent() {
                       <td className="p-4 text-gray-400">{new Date(res.created_at).toLocaleString()}</td>
                       <td className="p-4 font-black text-[#fdd835]">${res.total_price.toFixed(2)}</td>
                       <td className="p-4">
-                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest ${res.status === 'completed' || res.status === 'pending' ? 'bg-[#fdd835]/20 text-[#fdd835] border border-[#fdd835]/30' : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'}`}>
+                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest ${res.status === 'completed' || res.status === 'pending' || res.status === 'active' ? 'bg-[#fdd835]/20 text-[#fdd835] border border-[#fdd835]/30' : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'}`}>
                           {res.status}
                         </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <button
+                          onClick={() => {
+                            try {
+                              const doc = new jsPDF();
+                              const yellow = [253, 216, 53];
+                              const dark = [18, 18, 23];
+                              
+                              // Fondo principal (blanco para factura formal)
+                              doc.setFillColor(255, 255, 255);
+                              doc.rect(0, 0, 210, 297, 'F');
+
+                              // --- ENCABEZADO ---
+                              // Logo "CINE"
+                              doc.setFillColor(...dark);
+                              doc.rect(14, 15, 40, 20, 'F');
+                              doc.setTextColor(...yellow);
+                              doc.setFontSize(22);
+                              doc.setFont('helvetica', 'bold');
+                              doc.text('CINE', 34, 29, { align: 'center' });
+
+                              // Datos de la Empresa
+                              doc.setTextColor(0, 0, 0);
+                              doc.setFontSize(9);
+                              doc.setFont('helvetica', 'bold');
+                              doc.text('Razón Social:', 65, 19);
+                              doc.text('RFC:', 65, 24);
+                              doc.text('Domicilio:', 65, 29);
+                              
+                              doc.setFont('helvetica', 'normal');
+                              doc.text('CINE ENTRETENIMIENTO S.A. DE C.V.', 95, 19);
+                              doc.text('CINE123456789', 95, 24);
+                              const domicilio = 'AV. PRINCIPAL 123, CENTRO. CIUDAD, PAÍS. CP 00000';
+                              doc.text(domicilio, 95, 29, { maxWidth: 60 });
+
+                              // Cuadro de Factura
+                              doc.setFillColor(...dark);
+                              doc.rect(160, 15, 36, 6, 'F');
+                              doc.setTextColor(...yellow);
+                              doc.setFontSize(9);
+                              doc.setFont('helvetica', 'bold');
+                              doc.text('FACTURA', 178, 19, { align: 'center' });
+                              
+                              doc.setDrawColor(...dark);
+                              doc.rect(160, 21, 36, 6);
+                              doc.setTextColor(0, 0, 0);
+                              doc.text(`F-${(res.id || 0).toString().padStart(6, '0')}`, 178, 25, { align: 'center' });
+
+                              // --- DATOS DEL CLIENTE Y FECHA ---
+                              doc.setFillColor(...dark);
+                              doc.rect(14, 45, 90, 5, 'F');
+                              doc.rect(106, 45, 90, 5, 'F');
+                              
+                              doc.setTextColor(...yellow);
+                              doc.setFontSize(9);
+                              doc.setFont('helvetica', 'bold');
+                              doc.text('Cliente', 16, 49);
+                              doc.text('Fecha / Hora', 108, 49);
+
+                              doc.setTextColor(0, 0, 0);
+                              doc.setFont('helvetica', 'bold');
+                              const clientName = (client && (client.full_name || client.email)) ? (client.full_name || client.email) : 'MOSTRADOR';
+                              doc.text(String(clientName).toUpperCase(), 16, 55);
+                              doc.setFont('helvetica', 'normal');
+                              if (client && client.email) doc.text(String(client.email), 16, 60);
+                              if (client && client.phone) doc.text(`Tel: ${client.phone}`, 16, 65);
+
+                              const dateStr = res.created_at ? new Date(res.created_at).toLocaleString() : 'N/A';
+                              doc.text(dateStr, 108, 55);
+
+                              // --- TABLA DE CONCEPTOS ---
+                              const showPrice = showtime ? (showtime.price || 0) : 0;
+                              const totalPrice = res.total_price || 0;
+                              let cantidad = 1;
+                              if (showPrice > 0) {
+                                cantidad = Math.round(totalPrice / showPrice);
+                              }
+
+                              const subtotal = totalPrice / 1.16;
+                              const iva = totalPrice - subtotal;
+                              const movieTitle = (movie && movie.title) ? movie.title : 'PELÍCULA';
+
+                              autoTable(doc, {
+                                startY: 75,
+                                head: [['Cantidad', 'Concepto', 'Unidad', 'Precio Unitario', 'Importe']],
+                                body: [
+                                  [
+                                    cantidad.toString(),
+                                    `Boleto Función: ${String(movieTitle).toUpperCase()}`,
+                                    'NO APLICA',
+                                    `$${showPrice > 0 ? (showPrice / 1.16).toFixed(2) : subtotal.toFixed(2)}`,
+                                    `$${subtotal.toFixed(2)}`
+                                  ]
+                                ],
+                                theme: 'plain',
+                                headStyles: { textColor: [100, 100, 100], fontStyle: 'italic', fontSize: 9 },
+                                bodyStyles: { textColor: [0, 0, 0], fontSize: 9, fontStyle: 'bold' },
+                                columnStyles: {
+                                  0: { cellWidth: 20 },
+                                  1: { cellWidth: 70 },
+                                  2: { cellWidth: 30 },
+                                  3: { cellWidth: 30 },
+                                  4: { cellWidth: 30 }
+                                },
+                                didDrawPage: function (data) {
+                                  doc.setDrawColor(...dark);
+                                  doc.setLineWidth(0.5);
+                                  doc.line(14, data.cursor.y, 196, data.cursor.y);
+                                }
+                              });
+
+                              const finalY = (doc.lastAutoTable && doc.lastAutoTable.finalY) ? doc.lastAutoTable.finalY + 5 : 100;
+
+                              // --- DATOS ADDENDA ---
+                              doc.setFontSize(9);
+                              doc.setFont('helvetica', 'bold');
+                              doc.text('Datos adición', 14, finalY + 5);
+                              
+                              doc.setFont('helvetica', 'normal');
+                              doc.text('Función:', 20, finalY + 10);
+                              doc.text(showtime ? new Date(showtime.start_time).toLocaleString() : 'N/A', 50, finalY + 10);
+                              doc.text('Estado:', 20, finalY + 15);
+                              const resStatus = res.status || 'ACTIVE';
+                              doc.text(String(resStatus).toUpperCase(), 50, finalY + 15);
+
+                              // --- TOTALES ---
+                              doc.setFont('helvetica', 'bold');
+                              doc.text('Subtotal', 140, finalY + 10);
+                              doc.text('IVA 16%', 140, finalY + 15);
+                              doc.text('TOTAL', 140, finalY + 22);
+
+                              doc.setFont('helvetica', 'normal');
+                              doc.text(`$${subtotal.toFixed(2)}`, 196, finalY + 10, { align: 'right' });
+                              doc.text(`$${iva.toFixed(2)}`, 196, finalY + 15, { align: 'right' });
+                              doc.setFont('helvetica', 'bold');
+                              doc.text(`$${totalPrice.toFixed(2)}`, 196, finalY + 22, { align: 'right' });
+
+                              // --- PIE DE PÁGINA ---
+                              doc.setFillColor(...dark);
+                              doc.rect(14, finalY + 30, 80, 5, 'F');
+                              doc.setTextColor(...yellow);
+                              doc.setFontSize(9);
+                              doc.text('Importe con letra', 16, finalY + 34);
+
+                              doc.setTextColor(0, 0, 0);
+                              doc.setFont('helvetica', 'normal');
+                              doc.text(`SON: (IMPORTE SIMULADO) M.N.`, 14, finalY + 42);
+                              doc.text('Moneda:   Peso Mexicano (MXN)', 14, finalY + 48);
+
+                              doc.setFillColor(...dark);
+                              doc.rect(14, finalY + 55, 100, 5, 'F');
+                              doc.setTextColor(...yellow);
+                              doc.text('Cadena Original del Complemento de Certificación', 16, finalY + 59);
+
+                              doc.save(`Factura_Reserva_${res.id || 'N'}.pdf`);
+                            } catch (err) {
+                              console.error("Error generating PDF:", err);
+                              alert("No se pudo descargar el PDF: " + err.message);
+                            }
+                          }}
+                          className="px-3 py-1 bg-[#fdd835] text-black font-bold rounded hover:bg-[#fff04d] transition-colors text-xs uppercase tracking-widest"
+                          title="Descargar Boleto"
+                        >
+                          ⬇️ PDF
+                        </button>
                       </td>
                     </tr>
                   );
@@ -2582,7 +2897,6 @@ function AdminAdminsContent() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-[#1f1f27] text-gray-500 text-xs tracking-widest uppercase">
-                  <th className="p-4 font-bold">ID</th>
                   <th className="p-4 font-bold">Nombre</th>
                   <th className="p-4 font-bold">Correo</th>
                   <th className="p-4 font-bold">Teléfono</th>
@@ -2592,13 +2906,227 @@ function AdminAdminsContent() {
               <tbody>
                 {admins.map(admin => (
                   <tr key={admin.id} className="border-b border-[#1f1f27] hover:bg-[#0b0b0f] transition-colors">
-                    <td className="p-4 font-bold text-[#fdd835]">#{admin.id}</td>
                     <td className="p-4 font-semibold text-white">{admin.full_name || 'Sin nombre'}</td>
                     <td className="p-4 text-gray-400">{admin.email}</td>
                     <td className="p-4 text-gray-400">{admin.phone || 'No registrado'}</td>
                     <td className="p-4">
                       <span className={`px-3 py-1 rounded-full text-xs font-bold ${admin.is_active ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
                         {admin.is_active ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AdminHistoryContent() {
+  const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterText, setFilterText] = useState('');
+  const [timeRange, setTimeRange] = useState('all');
+
+  useEffect(() => {
+    fetch('http://localhost:8000/api/v1/reservations/history/all')
+      .then(res => res.json())
+      .then(data => {
+        setHistory(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setLoading(false);
+      });
+  }, []);
+
+  const filteredHistory = history.filter(record => {
+    const matchesText = record.movie_title.toLowerCase().includes(filterText.toLowerCase()) ||
+                        record.user_name.toLowerCase().includes(filterText.toLowerCase()) ||
+                        record.user_email.toLowerCase().includes(filterText.toLowerCase());
+    
+    if (!matchesText) return false;
+
+    if (timeRange === 'all') return true;
+
+    const recordDate = new Date(record.created_at || record.showtime_start);
+    const now = new Date();
+    
+    if (timeRange === 'today') {
+      return recordDate.toDateString() === now.toDateString();
+    }
+    if (timeRange === 'this_week') {
+      const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
+      startOfWeek.setHours(0, 0, 0, 0);
+      return recordDate >= startOfWeek && recordDate <= new Date();
+    }
+    if (timeRange === 'this_month') {
+      return recordDate.getMonth() === now.getMonth() && recordDate.getFullYear() === now.getFullYear();
+    }
+    if (timeRange === 'last_month') {
+      const lastMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+      const year = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+      return recordDate.getMonth() === lastMonth && recordDate.getFullYear() === year;
+    }
+    if (timeRange === 'this_year') {
+      return recordDate.getFullYear() === now.getFullYear();
+    }
+
+    return true;
+  });
+
+  const totalRevenue = filteredHistory.reduce((sum, record) => sum + (record.status === 'active' ? record.total_price : 0), 0);
+  const totalTickets = filteredHistory.reduce((sum, record) => sum + (record.status === 'active' && record.seats !== 'Ninguno' ? record.seats.split(',').length : 0), 0);
+  const distinctShowtimes = new Set(filteredHistory.map(r => `${r.movie_title}-${r.showtime_start}`)).size;
+
+  const downloadPDF = () => {
+    const doc = new jsPDF();
+    doc.setFillColor(11, 11, 15);
+    doc.rect(0, 0, doc.internal.pageSize.width, doc.internal.pageSize.height, 'F');
+    
+    doc.setTextColor(253, 216, 53);
+    doc.setFontSize(22);
+    doc.text("Historial de Funciones - Cine", 14, 22);
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(11);
+    doc.text(`Total Ingresos: $${totalRevenue.toFixed(2)}`, 14, 32);
+    doc.text(`Boletos Vendidos: ${totalTickets}`, 14, 38);
+    doc.text(`Funciones Unicas: ${distinctShowtimes}`, 14, 44);
+    
+    let timeRangeText = 'Todos los tiempos';
+    if(timeRange === 'today') timeRangeText = 'Hoy';
+    if(timeRange === 'this_week') timeRangeText = 'Esta Semana';
+    if(timeRange === 'this_month') timeRangeText = 'Este Mes';
+    if(timeRange === 'last_month') timeRangeText = 'Mes Pasado';
+    if(timeRange === 'this_year') timeRangeText = 'Este Año';
+    doc.text(`Filtro: ${timeRangeText}`, 14, 50);
+
+    const tableColumn = ["ID", "Cliente", "Pelicula", "Fecha", "Asientos", "Total"];
+    const tableRows = [];
+
+    filteredHistory.forEach(record => {
+      if(record.status === 'active') {
+        const recordData = [
+          `#${record.reservation_id}`,
+          record.user_name,
+          record.movie_title,
+          record.showtime_start ? new Date(record.showtime_start).toLocaleDateString() : 'N/A',
+          record.seats,
+          `$${record.total_price.toFixed(2)}`
+        ];
+        tableRows.push(recordData);
+      }
+    });
+
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 56,
+      theme: 'grid',
+      headStyles: { fillColor: [26, 26, 34], textColor: [255, 255, 255] },
+      bodyStyles: { fillColor: [18, 18, 23], textColor: [200, 200, 200] },
+      alternateRowStyles: { fillColor: [22, 22, 28] },
+      styles: { lineColor: [31, 31, 39], lineWidth: 0.1 }
+    });
+
+    doc.save(`reporte_historial_${new Date().getTime()}.pdf`);
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+        <div>
+          <h2 className="text-3xl font-bold mb-2">Historial de Funciones</h2>
+          <p className="text-gray-400">Revisa todas las compras y reservas realizadas.</p>
+        </div>
+        <button 
+          onClick={downloadPDF}
+          className="flex items-center gap-2 px-6 py-2.5 bg-[#fdd835] text-black rounded-lg text-sm font-bold hover:bg-[#fff04d] transition-colors shadow-[0_0_15px_rgba(253,216,53,0.3)]"
+        >
+          <span>📄</span> Descargar Reporte (PDF)
+        </button>
+      </div>
+      
+      {/* Metrics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-[#121217] border border-[#1f1f27] rounded-xl p-6 relative overflow-hidden group hover:border-[#fdd835]/30 transition-colors">
+          <div className="text-gray-400 text-sm font-bold uppercase tracking-widest mb-1">Ingresos</div>
+          <div className="text-3xl font-black text-white">${totalRevenue.toFixed(2)}</div>
+        </div>
+        <div className="bg-[#121217] border border-[#1f1f27] rounded-xl p-6 relative overflow-hidden group hover:border-[#fdd835]/30 transition-colors">
+          <div className="text-gray-400 text-sm font-bold uppercase tracking-widest mb-1">Boletos Vendidos</div>
+          <div className="text-3xl font-black text-white">{totalTickets}</div>
+        </div>
+        <div className="bg-[#121217] border border-[#1f1f27] rounded-xl p-6 relative overflow-hidden group hover:border-[#fdd835]/30 transition-colors">
+          <div className="text-gray-400 text-sm font-bold uppercase tracking-widest mb-1">Funciones</div>
+          <div className="text-3xl font-black text-white">{distinctShowtimes}</div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-col md:flex-row gap-4">
+        <input 
+          type="text" 
+          placeholder="Buscar por cliente, correo o película..." 
+          value={filterText}
+          onChange={(e) => setFilterText(e.target.value)}
+          className="flex-1 p-3 rounded-xl bg-[#121217] border border-[#1f1f27] text-white focus:border-[#fdd835] focus:outline-none transition-colors"
+        />
+        <select 
+          value={timeRange}
+          onChange={(e) => setTimeRange(e.target.value)}
+          className="p-3 rounded-xl bg-[#121217] border border-[#1f1f27] text-white focus:border-[#fdd835] focus:outline-none transition-colors cursor-pointer"
+        >
+          <option value="all">Todo el tiempo</option>
+          <option value="today">Hoy</option>
+          <option value="this_week">Esta Semana</option>
+          <option value="this_month">Este Mes</option>
+          <option value="last_month">Mes Pasado</option>
+          <option value="this_year">Este Año</option>
+        </select>
+      </div>
+      
+      <div className="bg-[#121217] border border-[#1f1f27] rounded-2xl overflow-hidden">
+        {loading ? (
+          <div className="p-8 text-center text-gray-400">Cargando historial...</div>
+        ) : filteredHistory.length === 0 ? (
+          <div className="p-8 text-center text-gray-400">No se encontraron reservas con los filtros aplicados.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-[#1a1a22] text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="p-4 font-bold tracking-wider">ID</th>
+                  <th className="p-4 font-bold tracking-wider">Cliente</th>
+                  <th className="p-4 font-bold tracking-wider">Película</th>
+                  <th className="p-4 font-bold tracking-wider">Fecha/Hora</th>
+                  <th className="p-4 font-bold tracking-wider">Asientos</th>
+                  <th className="p-4 font-bold tracking-wider">Total</th>
+                  <th className="p-4 font-bold tracking-wider">Estado</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#1f1f27]">
+                {filteredHistory.map((record, idx) => (
+                  <tr key={idx} className="hover:bg-white/5 transition-colors">
+                    <td className="p-4 font-mono text-[#fdd835]">#{record.reservation_id}</td>
+                    <td className="p-4">
+                      <div className="font-bold text-white">{record.user_name}</div>
+                      <div className="text-xs text-gray-400">{record.user_email}</div>
+                    </td>
+                    <td className="p-4 font-medium">{record.movie_title}</td>
+                    <td className="p-4">
+                      {record.showtime_start ? new Date(record.showtime_start).toLocaleString() : 'N/A'}
+                    </td>
+                    <td className="p-4 text-gray-300">{record.seats}</td>
+                    <td className="p-4 font-bold text-green-400">${record.total_price.toFixed(2)}</td>
+                    <td className="p-4">
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${record.status === 'active' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                        {record.status.toUpperCase()}
                       </span>
                     </td>
                   </tr>

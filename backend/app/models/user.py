@@ -3,6 +3,10 @@ from sqlalchemy.orm import relationship
 from ..db.base import Base
 
 class User(Base):
+    """
+    Modelo SQLAlchemy que representa a un usuario en el sistema.
+    Almacena datos personales, credenciales y su rol (admin o cliente).
+    """
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String, nullable=True)

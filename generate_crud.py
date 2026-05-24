@@ -1,3 +1,9 @@
+"""
+generate_crud.py
+
+Este script genera archivos de enrutadores (routers) y esquemas (schemas) básicos para 
+la aplicación de gestión de cines. Crea las rutas CRUD para Películas, Salas y Funciones.
+"""
 import os
 
 BASE_DIR = r"c:\Users\Jesus Orlando\Desktop\api cine 2.0 recitificada\backend\app"
