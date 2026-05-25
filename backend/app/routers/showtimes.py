@@ -20,6 +20,10 @@ async def read_showtimes(db: AsyncSession = Depends(get_db)):
 @router.post('/', response_model=Showtime)
 async def create_showtime(showtime: ShowtimeCreate, db: AsyncSession = Depends(get_db)):
     data = showtime.dict()
+    
+    # IMPORTANTE: PostgreSQL y SQLAlchemy pueden tener problemas si se mezclan objetos
+    # datetime "naive" (sin zona horaria) con "aware" (con zona horaria).
+    # Aquí removemos la zona horaria explícitamente para estandarizar (asumiendo UTC).
     if data.get('start_time') and data['start_time'].tzinfo:
         data['start_time'] = data['start_time'].replace(tzinfo=None)
     if data.get('end_time') and data['end_time'].tzinfo:

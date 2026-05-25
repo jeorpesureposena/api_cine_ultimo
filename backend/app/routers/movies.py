@@ -31,30 +31,46 @@ async def read_active_movies(db: AsyncSession = Depends(get_db)):
     Devuelve únicamente las películas que están actualmente en cartelera 
     (tienen funciones activas y no han terminado).
     """
+    # 1. Hacemos una consulta base sobre el modelo Movie
     result = await db.execute(
         select(MovieModel)
+        # 2. Le decimos a SQLAlchemy que cargue los géneros de la película por adelantado (selectinload)
+        # para evitar consultas extra (problema N+1)
         .options(selectinload(MovieModel.genres))
+        # 3. Hacemos un JOIN con la tabla de Funciones (ShowtimeModel)
         .join(ShowtimeModel)
+        # 4. Filtramos: La función debe estar activa y su fecha/hora de fin debe ser mayor a la actual (aún no termina)
         .where(
             ShowtimeModel.is_active == True,
             ShowtimeModel.end_time > datetime.utcnow()
         )
+        # 5. DISTINCT asegura que si una película tiene 5 funciones, no nos devuelva 5 veces la misma película
         .distinct()
     )
+    # 6. Devolvemos la lista de películas extraídas de los resultados escalares de la consulta
     return result.scalars().all()
 
 @router.post('/', response_model=Movie)
 async def create_movie(movie: MovieCreate, db: AsyncSession = Depends(get_db)):
+    # 1. Convertimos el esquema Pydantic a diccionario, pero EXCLUIMOS la lista de IDs de géneros
+    # ya que los géneros son una relación muchos-a-muchos y no una columna directa en la tabla de películas
     movie_data = movie.dict(exclude={"genre_ids"})
+    
+    # 2. Instanciamos el modelo SQLAlchemy con los datos base (título, descripción, etc.)
     db_movie = MovieModel(**movie_data)
     
+    # 3. Si se enviaron IDs de géneros en la petición, los procesamos
     if movie.genre_ids:
+        # Hacemos una consulta para traer los objetos Genre de la BD cuyos IDs coincidan con los enviados
         genres_result = await db.execute(select(GenreModel).where(GenreModel.id.in_(movie.genre_ids)))
+        # Asignamos la lista de objetos Genre a la relación `genres` de nuestra nueva película
         db_movie.genres = list(genres_result.scalars().all())
         
+    # 4. Guardamos en la base de datos
     db.add(db_movie)
     await db.commit()
     await db.refresh(db_movie)
+    
     return db_movie
 
 @router.put('/{movie_id}', response_model=Movie)

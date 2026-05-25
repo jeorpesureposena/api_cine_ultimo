@@ -15,6 +15,7 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
     password: Optional[str] = None
+    is_active: Optional[bool] = None
 
 @router.get('/', response_model=List[UserRead])
 async def read_users(db: AsyncSession = Depends(get_db)):
@@ -35,7 +36,7 @@ async def create_client(payload: UserCreate, db: AsyncSession = Depends(get_db))
         email=payload.email,
         full_name=payload.full_name,
         phone=payload.phone,
-        hashed_password=hash_password(payload.password),
+        hashed_password=hash_password(payload.password) if payload.password else "",
         role="cliente"
     )
     db.add(user)
@@ -45,18 +46,30 @@ async def create_client(payload: UserCreate, db: AsyncSession = Depends(get_db))
 
 @router.put('/{user_id}', response_model=UserRead)
 async def update_user(user_id: int, payload: UserUpdate, db: AsyncSession = Depends(get_db)):
+    # 1. Buscamos al usuario por su ID
     result = await db.execute(select(UserModel).where(UserModel.id == user_id))
     user = result.scalar_one_or_none()
+    
+    # 2. Validamos que el usuario exista
     if not user:
         raise HTTPException(status_code=404, detail='Usuario no encontrado')
+        
+    # 3. Actualización Parcial: Solo actualizamos los campos que el frontend haya enviado (no nulos)
     if payload.full_name is not None:
         user.full_name = payload.full_name
     if payload.phone is not None:
         user.phone = payload.phone
     if payload.email is not None:
         user.email = payload.email
+        
+    # Si enviaron contraseña nueva, hay que volverla a hashear (encriptar) antes de guardarla
     if payload.password:
         user.hashed_password = hash_password(payload.password)
+        
+    if payload.is_active is not None:
+        user.is_active = payload.is_active
+        
+    # 4. Confirmar los cambios
     await db.commit()
     await db.refresh(user)
     return user

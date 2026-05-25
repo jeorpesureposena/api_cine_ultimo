@@ -9,10 +9,18 @@ class User(Base):
     """
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    full_name = Column(String, nullable=True)
-    phone = Column(String, nullable=True)
+    
+    full_name = Column(String, nullable=True) # Nombre completo del cliente (opcional al registrarse)
+    phone = Column(String, nullable=True) # Teléfono (opcional)
+    
+    # Correo del usuario. unique=True asegura que no existan cuentas duplicadas. index=True acelera la búsqueda en el Login.
     email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    is_active = Column(Boolean, default=True)
-    role = Column(String, default="cliente")
+    
+    # MUY IMPORTANTE: Se guarda en formato String pero NUNCA en texto plano, siempre debe contener un hash bcrypt (ej. $2b$12$...)
+    hashed_password = Column(String, nullable=True)
+    
+    is_active = Column(Boolean, default=True) # Sirve para suspender/banear usuarios
+    role = Column(String, default="cliente") # Control de permisos: "cliente" o "admin"
+    
+    # Relación uno-a-muchos: Un usuario puede tener múltiples reservas a su nombre
     reservations = relationship("Reservation", back_populates="user")

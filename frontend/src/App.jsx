@@ -74,6 +74,7 @@ function App() {
  * @returns {JSX.Element} Panel de control interactivo.
  */
 function Dashboard({ onNavigate }) {
+  // Arreglo estático con las opciones del panel. Cada opción tiene un id único, título, descripción e ícono.
   const options = [
     { id: 'movies', title: 'Explorar Cartelera', desc: 'Descubre los últimos estrenos y compra tus entradas.', icon: '🍿', color: 'bg-red-500/10 border-red-500/30 hover:border-cinema-red' },
     { id: 'my_reservations', title: 'Mis Reservas', desc: 'Gestiona tus boletos y mira tu historial de compras.', icon: '🎟️', color: 'bg-blue-500/10 border-blue-500/30 hover:border-blue-500' },
@@ -108,15 +109,19 @@ function Dashboard({ onNavigate }) {
 }
 
 function MyReservations({ onBack }) {
+  // Estado para almacenar el listado de reservas que viene del backend
   const [reservations, setReservations] = useState([]);
+  // Estado para mostrar un loader mientras se obtienen los datos
   const [loading, setLoading] = useState(true);
 
+  // useEffect se ejecuta una sola vez al montar el componente (gracias al [] vacío)
   useEffect(() => {
+    // Petición GET al backend para obtener todas las reservas
     fetch('http://localhost:8000/api/v1/reservations/')
-      .then(res => res.json())
+      .then(res => res.json()) // Convertimos la respuesta HTTP a formato JSON
       .then(data => {
-        setReservations(data);
-        setLoading(false);
+        setReservations(data); // Guardamos la data en el estado de React
+        setLoading(false); // Apagamos el loader
       })
       .catch(err => {
         console.error("Error fetching reservations:", err);
@@ -178,22 +183,40 @@ function MyReservations({ onBack }) {
 }
 
 function MovieGrid({ isAuthenticated, onBuyTickets, hideTitle }) {
+  // Estado para almacenar las películas cargadas de la base de datos
   const [movies, setMovies] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Se ejecuta al montar el componente para pedir las películas activas y sus precios reales
   useEffect(() => {
-    fetch('http://localhost:8000/api/v1/movies/active')
-      .then(res => res.json())
-      .then(data => {
-        // Asignar precio base estático si el modelo no lo tiene para propósitos visuales
-        const moviesWithPrice = data.map(m => ({ ...m, price: 5.00 }));
+    Promise.all([
+      fetch('http://localhost:8000/api/v1/movies/active'),
+      fetch('http://localhost:8000/api/v1/showtimes/')
+    ])
+    .then(async ([moviesRes, showtimesRes]) => {
+      if (moviesRes.ok && showtimesRes.ok) {
+        const moviesData = await moviesRes.json();
+        const showtimesData = await showtimesRes.json();
+        
+        // Asociamos a cada película el precio de su primera función activa en showtimes
+        const moviesWithPrice = moviesData.map(movie => {
+          const movieShowtimes = showtimesData.filter(s => s.movie_id === movie.id);
+          const price = movieShowtimes.length > 0 ? movieShowtimes[0].price : 5.00;
+          return { ...movie, price };
+        });
+        
         setMovies(moviesWithPrice);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error("Error fetching movies:", err);
-        setLoading(false);
-      });
+      } else if (moviesRes.ok) {
+        const moviesData = await moviesRes.json();
+        const moviesWithPrice = moviesData.map(m => ({ ...m, price: 5.00 }));
+        setMovies(moviesWithPrice);
+      }
+      setLoading(false);
+    })
+    .catch(err => {
+      console.error("Error fetching movies/showtimes:", err);
+      setLoading(false);
+    });
   }, []);
 
   if (loading) {
@@ -254,33 +277,109 @@ function MovieGrid({ isAuthenticated, onBuyTickets, hideTitle }) {
 }
 
 function SeatSelector({ movie, onBack }) {
-  const rows = ['A', 'B', 'C', 'D', 'E'];
-  const cols = [1, 2, 3, 4, 5, 6, 7, 8];
+  const [showtimes, setShowtimes] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [halls, setHalls] = useState([]);
   
-  // Dummy occupied seats
-  const occupiedSeats = ['A3', 'A4', 'C5', 'C6', 'E8'];
+  const [selectedShowtimeId, setSelectedShowtimeId] = useState('');
+  const [selectedClientId, setSelectedClientId] = useState('');
   
-  const [selectedSeats, setSelectedSeats] = useState([]);
+  const [hallSeats, setHallSeats] = useState([]);
+  const [occupiedSeatIds, setOccupiedSeatIds] = useState([]);
+  const [selectedSeatIds, setSelectedSeatIds] = useState([]);
+  
   const [isReserving, setIsReserving] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const toggleSeat = (seatId) => {
-    if (occupiedSeats.includes(seatId)) return;
-    if (selectedSeats.includes(seatId)) {
-      setSelectedSeats(selectedSeats.filter(s => s !== seatId));
+  // Cargar funciones, clientes y salas iniciales
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const [showtimesRes, usersRes, hallsRes] = await Promise.all([
+          fetch('http://localhost:8000/api/v1/showtimes/'),
+          fetch('http://localhost:8000/api/v1/users/', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          fetch('http://localhost:8000/api/v1/halls/')
+        ]);
+        
+        if (showtimesRes.ok) {
+          const allShowtimes = await showtimesRes.json();
+          setShowtimes(allShowtimes.filter(s => s.movie_id === movie.id));
+        }
+        if (usersRes.ok) {
+          const allUsers = await usersRes.json();
+          setClients(allUsers.filter(u => u.role === 'cliente'));
+        }
+        if (hallsRes.ok) {
+          setHalls(await hallsRes.json());
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    fetchData();
+  }, [movie]);
+
+  // Cargar asientos y reservas ocupadas al cambiar la función seleccionada
+  useEffect(() => {
+    if (selectedShowtimeId) {
+      const showtime = showtimes.find(s => s.id === parseInt(selectedShowtimeId));
+      if (showtime) {
+        Promise.all([
+          fetch(`http://localhost:8000/api/v1/halls/${showtime.hall_id}/seats`),
+          fetch(`http://localhost:8000/api/v1/reservations/showtime/${showtime.id}/seats`)
+        ])
+        .then(async ([seatsRes, occRes]) => {
+          if (seatsRes.ok) setHallSeats(await seatsRes.json());
+          if (occRes.ok) setOccupiedSeatIds(await occRes.json());
+          setSelectedSeatIds([]);
+        })
+        .catch(err => console.error(err));
+      }
     } else {
-      setSelectedSeats([...selectedSeats, seatId]);
+      setHallSeats([]);
+      setOccupiedSeatIds([]);
+      setSelectedSeatIds([]);
+    }
+  }, [selectedShowtimeId, showtimes]);
+
+  const toggleSeat = (seatId) => {
+    if (occupiedSeatIds.includes(seatId)) return;
+    if (selectedSeatIds.includes(seatId)) {
+      setSelectedSeatIds(selectedSeatIds.filter(id => id !== seatId));
+    } else {
+      setSelectedSeatIds([...selectedSeatIds, seatId]);
     }
   };
 
   const handleReserve = async () => {
+    if (!selectedClientId) {
+      alert('Por favor selecciona un cliente para la reserva.');
+      return;
+    }
+    if (!selectedShowtimeId) {
+      alert('Por favor selecciona una función.');
+      return;
+    }
+    if (selectedSeatIds.length === 0) {
+      alert('Por favor selecciona al menos un asiento.');
+      return;
+    }
+
     setIsReserving(true);
     try {
       const token = localStorage.getItem('token');
+      const showtime = showtimes.find(s => s.id === parseInt(selectedShowtimeId));
+      const totalPrice = selectedSeatIds.length * (showtime?.price || movie.price);
+      
       const payload = {
-        showtime_id: movie.id, // Usando el id de la película como id de función por ahora
-        total_price: selectedSeats.length * movie.price,
-        seat_ids: [1, 2] // Asientos de ejemplo
+        user_id: parseInt(selectedClientId),
+        showtime_id: parseInt(selectedShowtimeId),
+        total_price: totalPrice,
+        status: 'active',
+        seat_ids: selectedSeatIds
       };
 
       const response = await fetch('http://localhost:8000/api/v1/reservations/', {
@@ -295,7 +394,8 @@ function SeatSelector({ movie, onBack }) {
       if (response.ok) {
         setSuccess(true);
       } else {
-        alert('Hubo un error al confirmar la reserva.');
+        const err = await response.json();
+        alert(err.detail || 'Hubo un error al confirmar la reserva.');
       }
     } catch (error) {
       alert('No se pudo conectar con el servidor.');
@@ -304,15 +404,31 @@ function SeatSelector({ movie, onBack }) {
     }
   };
 
+  // Agrupar asientos por fila
+  const seatsByRow = hallSeats.reduce((acc, seat) => {
+    if (!acc[seat.row]) acc[seat.row] = [];
+    acc[seat.row].push(seat);
+    return acc;
+  }, {});
+
   if (success) {
+    const selectedShowtime = showtimes.find(s => s.id === parseInt(selectedShowtimeId));
+    const selectedClient = clients.find(c => c.id === parseInt(selectedClientId));
+    const seatNames = selectedSeatIds.map(id => {
+      const seat = hallSeats.find(s => s.id === id);
+      return seat ? `${seat.row}${seat.number}` : id;
+    }).join(', ');
+
     return (
       <div className="flex justify-center items-center min-h-[60vh] animate-fade-in">
-        <div className="glass-panel w-full max-w-md text-center">
+        <div className="glass-panel w-full max-w-md text-center p-8 bg-[#121217] border border-[#1f1f27] rounded-2xl shadow-2xl">
           <div className="text-6xl mb-4">🎟️</div>
-          <h2 className="text-3xl mb-4 text-green-400">¡Reserva Confirmada!</h2>
+          <h2 className="text-3xl mb-4 text-green-400 font-bold">¡Reserva Confirmada!</h2>
           <p className="text-gray-300 mb-2">Película: <strong>{movie.title}</strong></p>
-          <p className="text-gray-300 mb-6">Asientos: <strong>{selectedSeats.join(', ')}</strong></p>
-          <button onClick={onBack} className="w-full py-3 px-6 rounded-lg font-heading font-semibold bg-cinema-red text-white hover:bg-cinema-red-hover">
+          <p className="text-gray-300 mb-2">Cliente: <strong>{selectedClient ? selectedClient.full_name : 'Desconocido'}</strong></p>
+          <p className="text-gray-300 mb-2">Horario: <strong>{selectedShowtime ? new Date(selectedShowtime.start_time).toLocaleString() : ''}</strong></p>
+          <p className="text-gray-300 mb-6">Asientos: <strong>{seatNames}</strong></p>
+          <button onClick={onBack} className="w-full py-3 px-6 rounded-lg font-bold bg-[#fdd835] text-black hover:bg-[#fff04d]">
             Volver a Cartelera
           </button>
         </div>
@@ -320,89 +436,159 @@ function SeatSelector({ movie, onBack }) {
     );
   }
 
+  const selectedShowtime = showtimes.find(s => s.id === parseInt(selectedShowtimeId));
+  const activeHall = selectedShowtime ? halls.find(h => h.id === selectedShowtime.hall_id) : null;
+  const currentPrice = selectedShowtime ? selectedShowtime.price : movie.price;
+  const selectedSeatNames = selectedSeatIds.map(id => {
+    const seat = hallSeats.find(s => s.id === id);
+    return seat ? `${seat.row}${seat.number}` : id;
+  }).join(', ') || 'Ninguno';
+
   return (
-    <div className="animate-fade-in max-w-4xl mx-auto">
-      <button onClick={onBack} className="text-gray-400 hover:text-white mb-6 flex items-center gap-2">
+    <div className="animate-fade-in max-w-4xl mx-auto font-sans">
+      <button onClick={onBack} className="text-gray-400 hover:text-white mb-6 flex items-center gap-2 font-semibold">
         ← Volver
       </button>
       
+      {/* Selectores de Función y Cliente */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 bg-[#0b0b0f] p-6 rounded-2xl border border-[#1f1f27]">
+        <div>
+          <label className="block text-gray-400 text-sm font-semibold mb-2">Función / Horario</label>
+          <select 
+            value={selectedShowtimeId}
+            onChange={(e) => setSelectedShowtimeId(e.target.value)}
+            className="w-full p-4 rounded-xl bg-[#121217] border border-[#1f1f27] text-white focus:outline-none focus:border-[#fdd835] appearance-none"
+          >
+            <option value="">Seleccionar Función</option>
+            {showtimes.map(s => {
+              const hall = halls.find(h => h.id === s.hall_id);
+              return (
+                <option key={s.id} value={s.id}>
+                  {new Date(s.start_time).toLocaleString()} - {hall ? hall.name : 'Sala'} (${s.price.toFixed(2)})
+                </option>
+              );
+            })}
+          </select>
+        </div>
+        <div>
+          <label className="block text-gray-400 text-sm font-semibold mb-2">Cliente asignado</label>
+          <select 
+            value={selectedClientId}
+            onChange={(e) => setSelectedClientId(e.target.value)}
+            className="w-full p-4 rounded-xl bg-[#121217] border border-[#1f1f27] text-white focus:outline-none focus:border-[#fdd835] appearance-none"
+          >
+            <option value="">Seleccionar Cliente</option>
+            {clients.map(c => (
+              <option key={c.id} value={c.id}>{c.full_name || c.email}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       <div className="flex flex-col md:flex-row gap-8">
-        <div className="flex-1 glass-panel">
-          <h2 className="text-2xl mb-8 text-center">{movie.title} - Sala Premium</h2>
+        <div className="flex-1 bg-[#121217] border border-[#1f1f27] rounded-2xl p-8">
+          <h2 className="text-2xl font-bold mb-8 text-center text-white uppercase tracking-wider">
+            {movie.title} {activeHall ? `- ${activeHall.name}` : ''}
+          </h2>
           
           {/* Pantalla */}
           <div className="mb-12">
-            <div className="h-2 bg-gradient-to-r from-transparent via-white to-transparent opacity-50 rounded-full blur-[2px]"></div>
-            <div className="h-12 bg-gradient-to-b from-white/10 to-transparent flex items-start justify-center pt-2 text-sm text-gray-500 tracking-widest uppercase">
+            <div className="h-2 bg-gradient-to-r from-transparent via-[#fdd835] to-transparent opacity-80 rounded-full blur-[2px] shadow-[0_0_20px_rgba(253,216,53,0.3)]"></div>
+            <div className="h-12 bg-gradient-to-b from-[#fdd835]/5 to-transparent flex items-start justify-center pt-3 text-xs text-[#fdd835] font-bold tracking-[0.5em] uppercase">
               Pantalla
             </div>
           </div>
 
-          {/* Cuadrícula de Asientos */}
-          <div className="flex flex-col gap-4 items-center">
-            {rows.map(row => (
-              <div key={row} className="flex gap-2 sm:gap-4 items-center">
-                <span className="w-6 text-gray-500 font-bold">{row}</span>
-                <div className="flex gap-2 sm:gap-3">
-                  {cols.map(col => {
-                    const seatId = `${row}${col}`;
-                    const isOccupied = occupiedSeats.includes(seatId);
-                    const isSelected = selectedSeats.includes(seatId);
-                    
-                    let seatClass = "w-8 h-8 sm:w-10 sm:h-10 rounded-t-lg rounded-b-sm cursor-pointer transition-all duration-200 flex items-center justify-center text-xs font-bold ";
-                    if (isOccupied) seatClass += "bg-[#1a1a22] text-gray-600 cursor-not-allowed";
-                    else if (isSelected) seatClass += "bg-[#fdd835] text-black shadow-[0_0_15px_rgba(253,216,53,0.5)] transform scale-110";
-                    else seatClass += "bg-white/5 border border-white/10 hover:bg-white/20 text-transparent hover:text-white";
+          {showtimes.length === 0 ? (
+            <div className="text-center py-16 text-gray-500 border border-dashed border-[#1f1f27] rounded-xl bg-[#0b0b0f]">
+              <span className="text-5xl mb-4 block">📅</span>
+              <p className="text-lg">No hay funciones programadas para esta película en este momento.</p>
+            </div>
+          ) : !selectedShowtimeId ? (
+            <div className="text-center py-16 text-[#fdd835] border border-dashed border-[#fdd835]/20 rounded-xl bg-[#fdd835]/5">
+              <span className="text-5xl mb-4 block">🎟️</span>
+              <p className="text-lg font-bold">Selecciona una función y horario arriba para habilitar el mapa de asientos.</p>
+            </div>
+          ) : (
+            <>
+              {/* Cuadrícula de Asientos */}
+              <div className="flex flex-col gap-4 items-center">
+                {Object.keys(seatsByRow).sort().map(row => (
+                  <div key={row} className="flex gap-2 sm:gap-4 items-center">
+                    <span className="w-6 text-gray-500 font-bold text-right">{row}</span>
+                    <div className="flex gap-2 sm:gap-3">
+                      {seatsByRow[row].sort((a,b) => a.number - b.number).map(seat => {
+                        const isOccupied = occupiedSeatIds.includes(seat.id);
+                        const isSelected = selectedSeatIds.includes(seat.id);
+                        
+                        let seatClass = "w-8 h-8 sm:w-10 sm:h-10 rounded-t-xl border-b-[4px] text-xs font-bold transition-all flex items-center justify-center cursor-pointer ";
+                        if (isOccupied) {
+                          seatClass += "bg-[#2a1a1f] border-[#ff5252] text-[#ff5252] opacity-50 cursor-not-allowed";
+                        } else if (isSelected) {
+                          seatClass += "bg-[#fdd835] border-[#b29525] text-black scale-110 shadow-[0_0_20px_rgba(253,216,53,0.5)]";
+                        } else {
+                          seatClass += "bg-[#1f1f27] border-[#3a3a45] text-gray-400 hover:bg-[#2a2a35] hover:border-[#4a4a55] hover:-translate-y-1 hover:text-white";
+                        }
 
-                    // Crear pasillo en el medio
-                    const marginClass = col === 4 ? "mr-4 sm:mr-8" : "";
+                        // Crear pasillo en el medio
+                        const marginClass = seat.number === 4 ? "mr-4 sm:mr-8" : "";
 
-                    return (
-                      <div 
-                        key={seatId} 
-                        className={`${seatClass} ${marginClass}`}
-                        onClick={() => toggleSeat(seatId)}
-                        title={seatId}
-                      >
-                        {col}
-                      </div>
-                    );
-                  })}
-                </div>
-                <span className="w-6 text-gray-500 font-bold text-right">{row}</span>
+                        return (
+                          <button 
+                            key={seat.id} 
+                            type="button"
+                            disabled={isOccupied}
+                            className={`${seatClass} ${marginClass}`}
+                            onClick={() => toggleSeat(seat.id)}
+                            title={`${row}${seat.number}`}
+                          >
+                            {seat.number}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <span className="w-6 text-gray-500 font-bold text-left">{row}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
 
-          <div className="flex justify-center gap-8 mt-12 text-sm text-gray-400">
-            <div className="flex items-center gap-2"><div className="w-4 h-4 bg-white/5 border border-white/10 rounded-sm"></div> Libre</div>
-            <div className="flex items-center gap-2"><div className="w-4 h-4 bg-[#fdd835] rounded-sm shadow-[0_0_10px_rgba(253,216,53,0.4)]"></div> Seleccionado</div>
-            <div className="flex items-center gap-2"><div className="w-4 h-4 bg-[#1a1a22] rounded-sm"></div> Ocupado</div>
-          </div>
+              <div className="flex justify-center gap-8 mt-12 pt-6 border-t border-[#1f1f27] text-xs text-gray-400 font-medium tracking-widest uppercase">
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 bg-[#1f1f27] border-b-[3px] border-[#3a3a45] rounded-t-sm"></div> Libre
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 bg-[#fdd835] border-b-[3px] border-[#b29525] rounded-t-sm"></div> Seleccionado
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 bg-[#2a1a1f] border-b-[3px] border-[#ff5252] rounded-t-sm opacity-50"></div> Ocupado
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Panel de Resumen */}
         <div className="w-full md:w-80">
-          <div className="glass-panel sticky top-24">
-            <h3 className="text-xl font-bold mb-4 border-b border-cinema-glass pb-4">Resumen</h3>
-            <div className="flex justify-between mb-2">
+          <div className="bg-[#121217] border border-[#1f1f27] rounded-2xl p-6 sticky top-24">
+            <h3 className="text-xl font-bold mb-4 border-b border-[#1f1f27] pb-4 text-white uppercase tracking-wider">Resumen</h3>
+            <div className="flex justify-between mb-3 text-sm">
               <span className="text-gray-400">Boletos:</span>
-              <span>{selectedSeats.length}</span>
+              <span className="text-white font-semibold">{selectedSeatIds.length}</span>
             </div>
-            <div className="flex justify-between mb-6">
+            <div className="flex justify-between mb-6 text-sm">
               <span className="text-gray-400">Asientos:</span>
-              <span className="font-bold text-[#fdd835] text-right">
-                {selectedSeats.length > 0 ? selectedSeats.join(', ') : 'Ninguno'}
+              <span className="font-bold text-[#fdd835] text-right truncate max-w-[150px]" title={selectedSeatNames}>
+                {selectedSeatNames}
               </span>
             </div>
-            <div className="flex justify-between text-xl font-bold mb-8 border-t border-[#1f1f27] pt-4">
+            <div className="flex justify-between text-xl font-bold mb-8 border-t border-[#1f1f27] pt-4 text-white">
               <span>Total:</span>
-              <span className="text-[#fdd835]">${(selectedSeats.length * movie.price).toFixed(2)}</span>
+              <span className="text-[#fdd835]">${(selectedSeatIds.length * currentPrice).toFixed(2)}</span>
             </div>
             <button 
               onClick={handleReserve}
-              disabled={selectedSeats.length === 0 || isReserving}
-              className="w-full py-4 px-6 rounded-xl font-bold bg-[#fdd835] text-black transition-all duration-300 hover:bg-[#fff04d] disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(253,216,53,0.3)]"
+              disabled={selectedSeatIds.length === 0 || isReserving || !selectedClientId}
+              className="w-full py-4 px-6 rounded-xl font-bold bg-[#fdd835] text-black transition-all duration-300 hover:bg-[#fff04d] hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 shadow-[0_0_15px_rgba(253,216,53,0.3)] uppercase tracking-wider text-sm"
             >
               {isReserving ? 'Procesando...' : 'Confirmar Reserva'}
             </button>
@@ -420,29 +606,36 @@ function LoginForm({ onSwitch, onLoginSuccess }) {
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
+    // Evitamos que la página se recargue (comportamiento por defecto de los formularios en HTML)
     e.preventDefault();
     setLoading(true);
-    setStatusMsg({ text: '', type: '' });
+    setStatusMsg({ text: '', type: '' }); // Limpiamos mensajes anteriores
 
     try {
+      // Hacemos una petición HTTP POST al backend pasándole el correo y contraseña
       const response = await fetch('http://localhost:8000/api/v1/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
 
+      // Extraemos la respuesta (que contendrá el token de acceso o el detalle del error)
       const data = await response.json();
 
       if (response.ok) {
         setStatusMsg({ text: '¡Sesión iniciada con éxito!', type: 'success' });
+        // Si el login es correcto, guardamos el JWT en el localStorage del navegador para que persista
         localStorage.setItem('token', data.access_token);
+        // Esperamos un segundo para que el usuario lea el mensaje y luego redirigimos al dashboard
         setTimeout(() => {
           onLoginSuccess();
         }, 1000);
       } else {
+        // Si el backend devolvió un código 401, mostramos el error detallado
         setStatusMsg({ text: data.detail || 'Credenciales inválidas.', type: 'error' });
       }
     } catch (error) {
+      // Este catch captura errores de red (ej. servidor apagado)
       setStatusMsg({ text: 'No se pudo conectar con el servidor.', type: 'error' });
     } finally {
       setLoading(false);
@@ -1952,9 +2145,12 @@ function AdminClientsContent() {
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [statusMsg, setStatusMsg] = useState({ text: '', type: '' });
   const [loading, setLoading] = useState(false);
+
+  // Estados para edición
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({ full_name: '', phone: '', email: '' });
 
   useEffect(() => {
     fetchClients();
@@ -1992,7 +2188,7 @@ function AdminClientsContent() {
 
     try {
       const token = localStorage.getItem('token');
-      const payload = { full_name: fullName, phone, email, password };
+      const payload = { full_name: fullName, phone, email };
 
       const response = await fetch('http://localhost:8000/api/v1/users/', {
         method: 'POST',
@@ -2008,7 +2204,6 @@ function AdminClientsContent() {
         setFullName('');
         setPhone('');
         setEmail('');
-        setPassword('');
         fetchClients();
       } else {
         const errData = await response.json();
@@ -2018,6 +2213,82 @@ function AdminClientsContent() {
       setStatusMsg({ text: 'No se pudo conectar con el servidor.', type: 'error' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const startEdit = (client) => {
+    setEditingId(client.id);
+    setEditForm({
+      full_name: client.full_name || '',
+      phone: client.phone || '',
+      email: client.email || ''
+    });
+  };
+
+  const handleUpdateClient = async (id) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`http://localhost:8000/api/v1/users/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(editForm)
+      });
+      if (response.ok) {
+        setEditingId(null);
+        fetchClients();
+      } else {
+        const err = await response.json();
+        alert(err.detail || 'Error al actualizar cliente');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error de conexión');
+    }
+  };
+
+  const handleToggleBlock = async (client) => {
+    const action = client.is_active ? 'bloquear' : 'activar';
+    if (!window.confirm(`¿Estás seguro de ${action} a este cliente?`)) return;
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`http://localhost:8000/api/v1/users/${client.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ is_active: !client.is_active })
+      });
+      if (response.ok) {
+        fetchClients();
+      } else {
+        alert('Error al cambiar estado del cliente');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteClient = async (id) => {
+    if (!window.confirm('¿Estás seguro de eliminar permanentemente a este cliente?')) return;
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`http://localhost:8000/api/v1/users/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        fetchClients();
+      } else {
+        alert('Error al eliminar cliente');
+      }
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -2065,18 +2336,6 @@ function AdminClientsContent() {
               className="w-full p-4 rounded-xl bg-[#0b0b0f] border border-[#1f1f27] text-white transition-colors focus:outline-none focus:border-[#fdd835]"
             />
           </div>
-          <div>
-            <label className="block text-gray-400 text-sm font-semibold mb-2">Contraseña (Min 6)</label>
-            <input 
-              type="password" 
-              required
-              minLength="6"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••" 
-              className="w-full p-4 rounded-xl bg-[#0b0b0f] border border-[#1f1f27] text-white transition-colors focus:outline-none focus:border-[#fdd835]"
-            />
-          </div>
           <button 
             type="submit" 
             disabled={loading}
@@ -2104,7 +2363,7 @@ function AdminClientsContent() {
           <p className="text-lg">No hay clientes registrados en el sistema.</p>
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto font-sans">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-[#1f1f27] text-gray-500 text-xs tracking-widest uppercase">
@@ -2113,20 +2372,99 @@ function AdminClientsContent() {
                 <th className="p-4 font-bold">Teléfono</th>
                 <th className="p-4 font-bold">Rol</th>
                 <th className="p-4 font-bold">Estado</th>
+                <th className="p-4 font-bold">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {clients.map(client => (
                 <tr key={client.id} className="border-b border-[#1f1f27] hover:bg-[#0b0b0f] transition-colors">
-                  <td className="p-4 font-semibold text-white">{client.full_name || 'Sin nombre'}</td>
-                  <td className="p-4 text-gray-400">{client.email}</td>
-                  <td className="p-4 text-gray-400">{client.phone || 'No registrado'}</td>
-                  <td className="p-4 text-gray-400 uppercase text-xs tracking-widest">{client.role}</td>
-                  <td className="p-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${client.is_active ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
-                      {client.is_active ? 'Activo' : 'Inactivo'}
-                    </span>
-                  </td>
+                  {editingId === client.id ? (
+                    <>
+                      <td className="p-4">
+                        <input 
+                          type="text" 
+                          value={editForm.full_name} 
+                          onChange={e => setEditForm({...editForm, full_name: e.target.value})} 
+                          className="w-full p-2 rounded bg-[#121217] border border-[#fdd835] text-white text-sm focus:outline-none"
+                        />
+                      </td>
+                      <td className="p-4">
+                        <input 
+                          type="email" 
+                          value={editForm.email} 
+                          onChange={e => setEditForm({...editForm, email: e.target.value})} 
+                          className="w-full p-2 rounded bg-[#121217] border border-[#fdd835] text-white text-sm focus:outline-none"
+                        />
+                      </td>
+                      <td className="p-4">
+                        <input 
+                          type="tel" 
+                          value={editForm.phone} 
+                          onChange={e => setEditForm({...editForm, phone: e.target.value})} 
+                          className="w-full p-2 rounded bg-[#121217] border border-[#fdd835] text-white text-sm focus:outline-none"
+                        />
+                      </td>
+                      <td className="p-4 text-gray-400 uppercase text-xs tracking-widest">{client.role}</td>
+                      <td className="p-4">
+                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${client.is_active ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                          {client.is_active ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => handleUpdateClient(client.id)} 
+                            className="px-3 py-1.5 bg-[#fdd835] text-black font-bold rounded-lg text-xs uppercase tracking-wider transition-colors hover:bg-[#fff04d]"
+                          >
+                            Guardar
+                          </button>
+                          <button 
+                            onClick={() => setEditingId(null)} 
+                            className="px-3 py-1.5 bg-[#2a2a35] text-white font-bold rounded-lg text-xs uppercase tracking-wider transition-colors hover:bg-[#3f3f4e]"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="p-4 font-semibold text-white">{client.full_name || 'Sin nombre'}</td>
+                      <td className="p-4 text-gray-400">{client.email}</td>
+                      <td className="p-4 text-gray-400">{client.phone || 'No registrado'}</td>
+                      <td className="p-4 text-gray-400 uppercase text-xs tracking-widest">{client.role}</td>
+                      <td className="p-4">
+                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${client.is_active ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                          {client.is_active ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-3">
+                          <button 
+                            onClick={() => startEdit(client)} 
+                            className="text-gray-400 hover:text-white transition-colors text-lg" 
+                            title="Editar"
+                          >
+                            ✏️
+                          </button>
+                          <button 
+                            onClick={() => handleToggleBlock(client)} 
+                            className="text-gray-400 hover:text-white transition-colors text-lg" 
+                            title={client.is_active ? "Bloquear Cliente" : "Activar Cliente"}
+                          >
+                            {client.is_active ? '🔒' : '🔓'}
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteClient(client.id)} 
+                            className="text-red-400 hover:text-red-300 transition-colors text-lg" 
+                            title="Eliminar"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -2183,7 +2521,10 @@ function AdminReservationsContent() {
       if (resRes.ok) setReservations(await resRes.json());
       if (showRes.ok) setShowtimes(await showRes.json());
       if (movRes.ok) setMovies(await movRes.json());
-      if (cliRes.ok) setClients(await cliRes.json());
+      if (cliRes.ok) {
+        const allUsers = await cliRes.json();
+        setClients(allUsers.filter(u => u.role === 'cliente'));
+      }
     } catch (err) {
       console.error(err);
     }
@@ -2290,8 +2631,7 @@ function AdminReservationsContent() {
         body: JSON.stringify({
           full_name: newClientName,
           email: newClientEmail,
-          phone: newClientPhone,
-          password: 'defaultPassword123'
+          phone: newClientPhone
         })
       });
       if (response.ok) {
@@ -2771,6 +3111,10 @@ function AdminAdminsContent() {
   const [statusMsg, setStatusMsg] = useState({ text: '', type: '' });
   const [loading, setLoading] = useState(false);
 
+  // Estados para edición
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({ full_name: '', phone: '', email: '', password: '' });
+
   useEffect(() => {
     fetchAdmins();
   }, []);
@@ -2829,6 +3173,97 @@ function AdminAdminsContent() {
       setStatusMsg({ text: 'No se pudo conectar con el servidor.', type: 'error' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const startEdit = (admin) => {
+    setEditingId(admin.id);
+    setEditForm({
+      full_name: admin.full_name || '',
+      phone: admin.phone || '',
+      email: admin.email || '',
+      password: '' // Inicialmente vacío si no desea cambiar contraseña
+    });
+  };
+
+  const handleUpdateAdmin = async (id) => {
+    try {
+      const token = localStorage.getItem('token');
+      const payload = {
+        full_name: editForm.full_name,
+        phone: editForm.phone,
+        email: editForm.email
+      };
+      
+      // Si el administrador introdujo una contraseña nueva, la añadimos al payload
+      if (editForm.password && editForm.password.trim().length >= 6) {
+        payload.password = editForm.password;
+      } else if (editForm.password && editForm.password.trim().length > 0) {
+        alert('La nueva contraseña debe tener al menos 6 caracteres.');
+        return;
+      }
+
+      const response = await fetch(`http://localhost:8000/api/v1/users/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (response.ok) {
+        setEditingId(null);
+        fetchAdmins();
+      } else {
+        const err = await response.json();
+        alert(err.detail || 'Error al actualizar administrador');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error de conexión');
+    }
+  };
+
+  const handleToggleBlock = async (admin) => {
+    const action = admin.is_active ? 'bloquear' : 'activar';
+    if (!window.confirm(`¿Estás seguro de ${action} a este administrador?`)) return;
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`http://localhost:8000/api/v1/users/${admin.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ is_active: !admin.is_active })
+      });
+      if (response.ok) {
+        fetchAdmins();
+      } else {
+        alert('Error al cambiar estado del administrador');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteAdmin = async (id) => {
+    if (!window.confirm('¿Estás seguro de eliminar permanentemente a este administrador?')) return;
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`http://localhost:8000/api/v1/users/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        fetchAdmins();
+      } else {
+        alert('Error al eliminar administrador');
+      }
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -2893,7 +3328,7 @@ function AdminAdminsContent() {
             <p className="text-lg">No hay administradores registrados.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto font-sans">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-[#1f1f27] text-gray-500 text-xs tracking-widest uppercase">
@@ -2901,19 +3336,104 @@ function AdminAdminsContent() {
                   <th className="p-4 font-bold">Correo</th>
                   <th className="p-4 font-bold">Teléfono</th>
                   <th className="p-4 font-bold">Estado</th>
+                  <th className="p-4 font-bold">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {admins.map(admin => (
                   <tr key={admin.id} className="border-b border-[#1f1f27] hover:bg-[#0b0b0f] transition-colors">
-                    <td className="p-4 font-semibold text-white">{admin.full_name || 'Sin nombre'}</td>
-                    <td className="p-4 text-gray-400">{admin.email}</td>
-                    <td className="p-4 text-gray-400">{admin.phone || 'No registrado'}</td>
-                    <td className="p-4">
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${admin.is_active ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
-                        {admin.is_active ? 'Activo' : 'Inactivo'}
-                      </span>
-                    </td>
+                    {editingId === admin.id ? (
+                      <>
+                        <td className="p-4">
+                          <input 
+                            type="text" 
+                            value={editForm.full_name} 
+                            onChange={e => setEditForm({...editForm, full_name: e.target.value})} 
+                            className="w-full p-2 rounded bg-[#121217] border border-[#fdd835] text-white text-sm focus:outline-none"
+                          />
+                        </td>
+                        <td className="p-4">
+                          <input 
+                            type="email" 
+                            value={editForm.email} 
+                            onChange={e => setEditForm({...editForm, email: e.target.value})} 
+                            className="w-full p-2 rounded bg-[#121217] border border-[#fdd835] text-white text-sm focus:outline-none"
+                          />
+                        </td>
+                        <td className="p-4">
+                          <input 
+                            type="tel" 
+                            value={editForm.phone} 
+                            onChange={e => setEditForm({...editForm, phone: e.target.value})} 
+                            className="w-full p-2 rounded bg-[#121217] border border-[#fdd835] text-white text-sm focus:outline-none"
+                          />
+                          <input 
+                            type="password" 
+                            placeholder="Nueva Contraseña (Opcional)" 
+                            value={editForm.password} 
+                            onChange={e => setEditForm({...editForm, password: e.target.value})} 
+                            className="w-full mt-2 p-2 rounded bg-[#121217] border border-[#fdd835] text-white text-xs focus:outline-none"
+                          />
+                        </td>
+                        <td className="p-4">
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${admin.is_active ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                            {admin.is_active ? 'Activo' : 'Inactivo'}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => handleUpdateAdmin(admin.id)} 
+                              className="px-3 py-1.5 bg-[#fdd835] text-black font-bold rounded-lg text-xs uppercase tracking-wider transition-colors hover:bg-[#fff04d]"
+                            >
+                              Guardar
+                            </button>
+                            <button 
+                              onClick={() => setEditingId(null)} 
+                              className="px-3 py-1.5 bg-[#2a2a35] text-white font-bold rounded-lg text-xs uppercase tracking-wider transition-colors hover:bg-[#3f3f4e]"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="p-4 font-semibold text-white">{admin.full_name || 'Sin nombre'}</td>
+                        <td className="p-4 text-gray-400">{admin.email}</td>
+                        <td className="p-4 text-gray-400">{admin.phone || 'No registrado'}</td>
+                        <td className="p-4">
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${admin.is_active ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                            {admin.is_active ? 'Activo' : 'Inactivo'}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => startEdit(admin)} 
+                              className="text-gray-400 hover:text-white transition-colors text-lg" 
+                              title="Editar"
+                            >
+                              ✏️
+                            </button>
+                            <button 
+                              onClick={() => handleToggleBlock(admin)} 
+                              className="text-gray-400 hover:text-white transition-colors text-lg" 
+                              title={admin.is_active ? "Bloquear Administrador" : "Activar Administrador"}
+                            >
+                              {admin.is_active ? '🔒' : '🔓'}
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteAdmin(admin.id)} 
+                              className="text-red-400 hover:text-red-300 transition-colors text-lg" 
+                              title="Eliminar"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                    )}
                   </tr>
                 ))}
               </tbody>
